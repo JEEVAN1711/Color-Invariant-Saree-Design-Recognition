@@ -129,63 +129,53 @@ class SareeColorShifter:
         rgb_array: np.ndarray,
         target_hex: str,
         preserve_zari: bool = True,
-        blend_intensity: float = 0.90
+        blend_intensity: float = 0.85
     ) -> np.ndarray:
         """
         Photorealistically recolors the saree fabric to the target hex color.
-        Preserves natural silk sheen, shadow folds, specular highlights, and
-        crucially preserves gold and silver zari borders and motifs so the saree
-        looks completely natural, authentic, and original.
+        Uses direct target dye replacement with natural fold shading and
+        protects gold/silver zari threads as well as neutral background.
         """
-        # Parse target hex to BGR and HSV/LAB
         hex_clean = target_hex.lstrip('#')
-        r, g, b = tuple(int(hex_clean[i:i+2], 16) for i in (0, 2, 4))
-        target_bgr = np.uint8([[[b, g, r]]])
-        target_hsv = cv2.cvtColor(target_bgr, cv2.COLOR_BGR2HSV)[0, 0].astype(np.float32)
+        r_val, g_val, b_val = tuple(int(hex_clean[i:i+2], 16) for i in (0, 2, 4))
+        target_bgr = np.uint8([[[b_val, g_val, r_val]]])
+        target_hsv = cv2.cvtColor(target_bgr, cv2.COLOR_BGR2HSV)[0, 0]
+        target_h = float(target_hsv[0])
+        target_s = float(target_hsv[1])
 
-        # Convert source image to BGR, HSV, and LAB
         bgr = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
-        lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-
         h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-        l, a_ch, b_ch = lab[:, :, 0], lab[:, :, 1], lab[:, :, 2]
 
-        # Detect metallic gold and silver zari in traditional sarees
-        # Gold zari: warm golden hue (H 12-42), high luminance (V > 105), moderate-to-high saturation (S > 45)
-        # Silver zari: low saturation (S < 35), high luminance (V > 175)
+        # 1. Detect metallic gold and silver zari in traditional sarees
         if preserve_zari:
-            gold_mask = ((h >= 12) & (h <= 42) & (s >= 45) & (v >= 105)).astype(np.float32)
-            silver_mask = ((s < 35) & (v >= 175)).astype(np.float32)
-            zari_mask = np.clip(gold_mask + silver_mask, 0.0, 1.0)
-            # Smooth mask edges for organic transition between silk fabric and metallic zari threads
-            zari_mask = cv2.GaussianBlur(zari_mask, (7, 7), 0)
+            gold_mask = ((h >= 12) & (h <= 42) & (s >= 35) & (v >= 95)).astype(np.float32)
+            silver_mask = ((s < 30) & (v >= 170)).astype(np.float32)
+            zari = np.clip(gold_mask + silver_mask, 0.0, 1.0)
+            zari = cv2.GaussianBlur(zari, (7, 7), 0)
         else:
-            zari_mask = np.zeros_like(h)
+            zari = np.zeros_like(h)
 
-        # Calculate fabric dyeing weight (1.0 = fully dyed fabric, 0.0 = preserved zari/original)
-        fabric_weight = np.clip((1.0 - zari_mask * 0.92) * blend_intensity, 0.0, 1.0)
+        # 2. Detect neutral/white background (don't tint pure white studio background)
+        bg_mask = ((s < 20) & (v > 235)).astype(np.float32)
+        bg_mask = cv2.GaussianBlur(bg_mask, (5, 5), 0)
 
-        # Soft hue blending (smoothly transition fabric hue towards target dye)
-        target_h = target_hsv[0]
-        # Circular hue difference
-        diff = (target_h - h + 90.0) % 180.0 - 90.0
-        h_new = (h + diff * fabric_weight) % 180.0
+        # 3. Calculate fabric dyeing weight (1.0 = fully dyed fabric, 0.0 = preserved zari/bg)
+        fabric_weight = np.clip((1.0 - zari * 0.92) * (1.0 - bg_mask * 0.98) * blend_intensity, 0.0, 1.0)
+        fabric_weight_3d = fabric_weight[:, :, np.newaxis]
 
-        # Saturation: adapt to target color vibrancy while preserving original shading gradients
+        # 4. Synthesize dyed fabric in HSV
+        dyed_h = np.full_like(h, target_h)
         mean_s = np.mean(s) if np.mean(s) > 10 else 120.0
-        sat_scale = np.clip(target_hsv[1] / mean_s, 0.65, 1.6)
-        s_dyed = np.clip(s * sat_scale, 35, 255)
-        s_new = s * (1.0 - fabric_weight) + s_dyed * fabric_weight
+        sat_scale = np.clip(target_s / mean_s, 0.65, 1.5)
+        dyed_s = np.clip(s * sat_scale, 35, 255)
+        dyed_hsv = np.stack([dyed_h, dyed_s, v], axis=-1).astype(np.uint8)
+        dyed_bgr = cv2.cvtColor(dyed_hsv, cv2.COLOR_HSV2BGR).astype(np.float32)
 
-        # Recombine in HSV
-        recolored_hsv = np.stack([h_new, s_new, v], axis=-1).astype(np.uint8)
-        recolored_bgr = cv2.cvtColor(recolored_hsv, cv2.COLOR_HSV2BGR)
-
-        # Re-introduce original LAB luminance (L*) to keep exact 3D folds, shadows, and sheen
-        recolored_lab = cv2.cvtColor(recolored_bgr, cv2.COLOR_BGR2LAB)
-        recolored_lab[:, :, 0] = l.astype(np.uint8)
-        final_bgr = cv2.cvtColor(recolored_lab, cv2.COLOR_LAB2BGR)
+        # 5. Blend dyed fabric with original fabric to retain natural luster and fold depth
+        orig_bgr = bgr.astype(np.float32)
+        final_bgr = orig_bgr * (1.0 - fabric_weight_3d) + dyed_bgr * fabric_weight_3d
+        final_bgr = np.clip(final_bgr, 0, 255).astype(np.uint8)
         final_rgb = cv2.cvtColor(final_bgr, cv2.COLOR_BGR2RGB)
 
         return final_rgb
