@@ -2,6 +2,9 @@
 
 > **An AI-powered Deep Learning system that recognizes saree designs (motifs, borders, weaves, and patterns) regardless of what color the fabric is dyed.**
 
+🌐 **Live Demo:** [SareeVision AI — Color-Invariant Saree Design Recognition](https://frontend-u2qb.vercel.app/)
+
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Vercel-success?style=for-the-badge&logo=vercel)](https://frontend-u2qb.vercel.app/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-red.svg)](https://pytorch.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-green.svg)](https://fastapi.tiangolo.com/)
@@ -82,6 +85,8 @@ The system passes every input saree image through a 4-step computer vision pipel
 ---
 
 ## ✨ Interactive Web App Features
+
+> **Try the Live App directly in your browser:** [https://frontend-u2qb.vercel.app/](https://frontend-u2qb.vercel.app/)
 
 The project includes an interactive web studio where users can upload and test sarees:
 
